@@ -1,0 +1,12 @@
+# Generated release package and local build outputs
+presets/
+*.zip
+Configure.exe
+__pycache__/
+*.pyc
+
+# Keep local credentials out of the repository
+.env
+.env.*
+*.pfx
+*.key
