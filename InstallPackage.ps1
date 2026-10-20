@@ -49,8 +49,13 @@ Get-ChildItem -LiteralPath $assetsSource -File |
     Copy-Item -Destination $assetsDir -Force
 Get-ChildItem -LiteralPath (Join-Path $assetsSource 'motion') -File |
     Copy-Item -Destination (Join-Path $assetsDir 'motion') -Force
-Copy-Item -LiteralPath (Join-Path $source 'CursorMotionV2.cs') -Destination $installDir -Force
-Copy-Item -LiteralPath (Join-Path $source 'CursorMotionV2.ps1') -Destination $installDir -Force
+if (-not (Test-Path -LiteralPath (Join-Path $assetsSource 'render'))) {
+    throw "The $Preset render sources are missing. Keep the complete package together."
+}
+Copy-Item -LiteralPath (Join-Path $assetsSource 'render') -Destination $assetsDir -Recurse -Force
+Copy-Item -LiteralPath (Join-Path $source 'CursorMotionV3.cs') -Destination $installDir -Force
+Copy-Item -LiteralPath (Join-Path $source 'CursorMotionV3.ps1') -Destination $installDir -Force
+Copy-Item -LiteralPath (Join-Path $source 'CursorMotionLauncher.ps1') -Destination $installDir -Force
 if (Test-Path -LiteralPath $stopFlag) { Remove-Item -LiteralPath $stopFlag -Force }
 
 foreach ($role in $roles.Keys) {
@@ -68,15 +73,40 @@ $powershellExe = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershe
 if (-not (Test-Path -LiteralPath $powershellExe)) {
     throw 'Windows PowerShell is required for the motion helper.'
 }
-$runner = Join-Path $installDir 'CursorMotionV2.ps1'
+$runner = Join-Path $installDir 'CursorMotionLauncher.ps1'
 $runCommand = '"' + $powershellExe + '" -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $runner + '"'
 $runKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Software\Microsoft\Windows\CurrentVersion\Run')
+$runKey.DeleteValue('CodexInspiredPointerMotionV2', $false)
 if ($EnableMotion -eq 1) {
-    $runKey.SetValue('CodexInspiredPointerMotionV2', $runCommand, [Microsoft.Win32.RegistryValueKind]::String)
+    $runKey.SetValue('CodexInspiredPointerMotionV3', $runCommand, [Microsoft.Win32.RegistryValueKind]::String)
 } else {
-    $runKey.DeleteValue('CodexInspiredPointerMotionV2', $false)
+    $runKey.DeleteValue('CodexInspiredPointerMotionV3', $false)
 }
 $runKey.Close()
+
+# A delayed logon task is a second entry point if Explorer skips its Run startup
+# value. The launcher mutex prevents duplicate supervisors.
+$taskName = 'CodexInspiredPointerMotionV3'
+try {
+    if ($EnableMotion -eq 1) {
+        $taskUser = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+        $trigger = New-ScheduledTaskTrigger -AtLogOn -User $taskUser
+        $trigger.Delay = 'PT20S'
+        $invoke = '& ''' + $runner.Replace("'", "''") + ''''
+        $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($invoke))
+        $action = New-ScheduledTaskAction -Execute $powershellExe -Argument (
+            '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -EncodedCommand ' + $encoded)
+        $principal = New-ScheduledTaskPrincipal -UserId $taskUser -LogonType Interactive -RunLevel Limited
+        $taskSettings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds 0) `
+            -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+        Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
+            -Principal $principal -Settings $taskSettings -Force | Out-Null
+    } else {
+        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+    }
+} catch {
+    Write-Warning "The delayed logon task could not be registered; the Run startup entry remains active: $_"
+}
 
 $native = @'
 using System;

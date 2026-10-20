@@ -2,6 +2,10 @@
 presets/
 *.zip
 Configure.exe
+CursorTestPanel.exe
+*.dll
+*.log
+*.status
 __pycache__/
 *.pyc
 

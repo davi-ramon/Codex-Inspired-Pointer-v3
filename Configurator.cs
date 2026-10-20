@@ -127,6 +127,22 @@ namespace CodexInspiredPointer
             };
             Controls.Add(restore);
 
+            var testPanel = new Button();
+            testPanel.Text = "Testar ponteiros";
+            testPanel.Location = new Point(615, 685);
+            testPanel.Size = new Size(185, 32);
+            testPanel.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
+            testPanel.Click += delegate {
+                string file = Path.Combine(packageRoot, "CursorTestPanel.exe");
+                try {
+                    if (!File.Exists(file)) throw new FileNotFoundException("Painel de testes nao encontrado", file);
+                    Process.Start(file);
+                } catch (Exception ex) {
+                    MessageBox.Show(this, ex.Message, "Nao foi possivel abrir o painel");
+                }
+            };
+            Controls.Add(testPanel);
+
             var close = new Button();
             close.Text = "Fechar";
             close.Location = new Point(818, 685);
@@ -226,7 +242,7 @@ namespace CodexInspiredPointer
 
         private ScriptResult RunScript(string action, string preset, bool motion)
         {
-            string script = Path.Combine(packageRoot, action == "install" ? "InstallPackage.ps1" : "UninstallV2.ps1");
+            string script = Path.Combine(packageRoot, action == "install" ? "InstallPackage.ps1" : "UninstallPackage.ps1");
             string powershell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows),
                                              "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
             if (!File.Exists(script)) throw new FileNotFoundException("Script do pacote nao encontrado", script);

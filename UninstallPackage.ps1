@@ -31,7 +31,9 @@ $schemesKey.DeleteValue('Codex-inspired Blue Glow 2', $false)
 $schemesKey.Close()
 $runKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Software\Microsoft\Windows\CurrentVersion\Run')
 $runKey.DeleteValue('CodexInspiredPointerMotionV2', $false)
+$runKey.DeleteValue('CodexInspiredPointerMotionV3', $false)
 $runKey.Close()
+Unregister-ScheduledTask -TaskName 'CodexInspiredPointerMotionV3' -Confirm:$false -ErrorAction SilentlyContinue
 
 $native = @'
 using System;
