@@ -43,6 +43,118 @@ namespace CodexInspiredPointer
         [DllImport("user32.dll")] internal static extern bool SystemParametersInfo(uint action, uint parameter, IntPtr value, uint flags);
     }
 
+    internal sealed class GlowSettings
+    {
+        public string ColorName = "Blue";
+        public int Radius = 120;
+        public int Intensity = 130;
+
+        public static GlowSettings Read(string root)
+        {
+            var result = new GlowSettings();
+            string file = Path.Combine(root, "settings.ini");
+            if (!File.Exists(file)) return result;
+            foreach (string line in File.ReadAllLines(file))
+            {
+                string[] pair = line.Split(new [] {'='}, 2);
+                if (pair.Length != 2) continue;
+                int number;
+                if (pair[0] == "GlowColor" &&
+                    (pair[1] == "Blue" || pair[1] == "Cyan" ||
+                     pair[1] == "Purple" || pair[1] == "White"))
+                    result.ColorName = pair[1];
+                if (pair[0] == "GlowRadius" && int.TryParse(pair[1], out number))
+                    result.Radius = Math.Max(75, Math.Min(140, number));
+                if (pair[0] == "GlowIntensity" && int.TryParse(pair[1], out number))
+                    result.Intensity = Math.Max(60, Math.Min(180, number));
+            }
+            return result;
+        }
+
+        public Bitmap Apply(Bitmap original, bool keepRed)
+        {
+            if (Radius == 100 && Intensity == 100 && (ColorName == "Blue" || keepRed))
+                return original;
+            int width = original.Width, height = original.Height;
+            var rect = new Rectangle(0, 0, width, height);
+            using (var source = original.Clone(rect, PixelFormat.Format32bppArgb))
+            {
+                BitmapData data = source.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+                var pixels = new byte[data.Stride * height];
+                Marshal.Copy(data.Scan0, pixels, 0, pixels.Length);
+                source.UnlockBits(data);
+                var bodyBytes = (byte[])pixels.Clone();
+                var glowBytes = new byte[pixels.Length];
+                Color color = keepRed ? Color.FromArgb(245, 52, 62) :
+                    ColorName == "Cyan" ? Color.FromArgb(35, 220, 255) :
+                    ColorName == "Purple" ? Color.FromArgb(160, 95, 255) :
+                    ColorName == "White" ? Color.FromArgb(225, 240, 255) :
+                    Color.FromArgb(38, 125, 255);
+                for (int y=0; y<height; y++)
+                    for (int x=0; x<width; x++)
+                    {
+                        int i=y*data.Stride+x*4;
+                        int b=pixels[i], g=pixels[i+1], r=pixels[i+2], a=pixels[i+3];
+                        bool light=keepRed ? r>g+25 && r>b+25 : b>r+25 && b>g+12;
+                        if (!light || a==0) continue;
+                        bodyBytes[i+3]=0;
+                        glowBytes[i]=color.B; glowBytes[i+1]=color.G;
+                        glowBytes[i+2]=color.R;
+                        glowBytes[i+3]=(byte)Math.Min(255, a*Intensity/100);
+                    }
+                using (Bitmap body=FromBytes(bodyBytes,width,height))
+                using (Bitmap glow=FromBytes(glowBytes,width,height))
+                {
+                    var result=new Bitmap(width,height,PixelFormat.Format32bppArgb);
+                    using (Graphics g=Graphics.FromImage(result))
+                    {
+                        g.Clear(Color.Transparent);
+                        g.InterpolationMode=InterpolationMode.HighQualityBicubic;
+                        g.PixelOffsetMode=PixelOffsetMode.HighQuality;
+                        float factor=Radius/100f;
+                        float w=width*factor, h=height*factor;
+                        g.DrawImage(glow,(width-w)/2f,(height-h)/2f,w,h);
+                    }
+                    FadeEdges(result);
+                    using (Graphics g=Graphics.FromImage(result))
+                        g.DrawImageUnscaled(body,0,0);
+                    return result;
+                }
+            }
+        }
+
+        private static void FadeEdges(Bitmap image)
+        {
+            int width=image.Width, height=image.Height;
+            var rect=new Rectangle(0,0,width,height);
+            BitmapData data=image.LockBits(rect,ImageLockMode.ReadWrite,PixelFormat.Format32bppArgb);
+            var bytes=new byte[data.Stride*height];
+            Marshal.Copy(data.Scan0,bytes,0,bytes.Length);
+            for (int y=0;y<height;y++)
+                for (int x=0;x<width;x++)
+                {
+                    int distance=Math.Min(Math.Min(x,y),Math.Min(width-1-x,height-1-y));
+                    if (distance>=18) continue;
+                    double t=Math.Max(0,distance/18.0);
+                    double fade=t*t*(3-2*t);
+                    int i=y*data.Stride+x*4+3;
+                    bytes[i]=(byte)Math.Round(bytes[i]*fade);
+                }
+            Marshal.Copy(bytes,0,data.Scan0,bytes.Length);
+            image.UnlockBits(data);
+        }
+
+        private static Bitmap FromBytes(byte[] bytes,int width,int height)
+        {
+            var bitmap=new Bitmap(width,height,PixelFormat.Format32bppArgb);
+            var rect=new Rectangle(0,0,width,height);
+            BitmapData data=bitmap.LockBits(rect,ImageLockMode.WriteOnly,PixelFormat.Format32bppArgb);
+            Marshal.Copy(bytes,0,data.Scan0,bytes.Length);
+            bitmap.UnlockBits(data);
+            return bitmap;
+        }
+    }
+
     internal sealed class Role : IDisposable
     {
         public readonly string Name;
@@ -50,7 +162,7 @@ namespace CodexInspiredPointer
         public readonly Bitmap[] Frames;
         public readonly int HotX, HotY;
         public string LastKey = "";
-        public Role(string name, uint id, string renderRoot, string cursorRoot)
+        public Role(string name, uint id, string renderRoot, string cursorRoot, GlowSettings glow)
         {
             Name = name; Id = id;
             string cur = Path.Combine(cursorRoot, name + ".cur");
@@ -62,9 +174,18 @@ namespace CodexInspiredPointer
                 string[] files = Directory.GetFiles(frameDir, "*.png");
                 Array.Sort(files, StringComparer.Ordinal);
                 Frames = new Bitmap[files.Length];
-                for (int i = 0; i < files.Length; i++) Frames[i] = new Bitmap(files[i]);
+                for (int i = 0; i < files.Length; i++) {
+                    Bitmap raw=new Bitmap(files[i]);
+                    Frames[i]=glow.Apply(raw,name=="no");
+                    if (!Object.ReferenceEquals(raw,Frames[i])) raw.Dispose();
+                }
             }
-            else Frames = new Bitmap[] { new Bitmap(png) };
+            else {
+                Bitmap raw=new Bitmap(png);
+                Bitmap frame=glow.Apply(raw,name=="no");
+                if (!Object.ReferenceEquals(raw,frame)) raw.Dispose();
+                Frames = new Bitmap[] { frame };
+            }
             if (Frames.Length == 0) throw new FileNotFoundException("No rendered cursor frames", frameDir);
             string hotFile = Path.Combine(renderRoot, name + ".hot");
             string[] hot = File.ReadAllText(hotFile).Trim().Split(',');
@@ -85,6 +206,7 @@ namespace CodexInspiredPointer
         private double lastSeconds, lastSchemeCheck = -1;
         private double angle, angleVelocity, scale = 1, scaleVelocity;
         private int failures, lastSize;
+        private double lastVisualUpdate;
         private bool active, paused;
         private double lastHeartbeat=-1;
 
@@ -98,7 +220,8 @@ namespace CodexInspiredPointer
                 "working", "help", "pen", "pin", "person" };
             uint[] ids = { 32512,32513,32514,32515,32516,32642,32643,32644,32645,
                 32646,32648,32649,32650,32651,32631,32671,32672 };
-            for (int i=0;i<names.Length;i++) roles.Add(new Role(names[i], ids[i], render, art));
+            GlowSettings glow=GlowSettings.Read(root);
+            for (int i=0;i<names.Length;i++) roles.Add(new Role(names[i], ids[i], render, art, glow));
             Native.GetCursorPos(out lastPoint);
             var menu = new ContextMenuStrip();
             var pause = new ToolStripMenuItem("Pausar movimento");
@@ -211,19 +334,21 @@ namespace CodexInspiredPointer
             scaleVelocity+=(630.0*(targetScale-scale)-25.0*scaleVelocity)*dt;
             scale=Clamp(scale+scaleVelocity*dt,.88,1.04);
             int scaleStep=(int)Clamp(Math.Round((scale-1.0)/.02),-6,2);
-            Role current=CurrentRole();
-            int spinnerFrame=(int)(now*30)%30;
-            // Keep the standard pointer, hand and animated wait states ready for role changes.
-            foreach (Role role in roles)
+            // Replacing several system cursors on every tick briefly exposes
+            // the small file-backed cursor between updates (the visible flash).
+            // Only the cursor currently on screen needs a motion frame. The
+            // native ANI files handle waiting states without any replacement.
+            if (now-lastVisualUpdate>=1.0/30.0)
             {
-                if (role.Name!="arrow" && role.Name!="hand" && role.Name!="busy" &&
-                    role.Name!="working" && role!=current) continue;
-                int limit=role.Name=="arrow"?18:role.Name=="hand"?12:8;
-                int step=role.Name=="arrow"?2:4;
-                int a=(int)Clamp(Math.Round(angle/step)*step,-limit,limit);
-                int frame=(role.Name=="busy" || role.Name=="working")?
-                    spinnerFrame%role.Frames.Length:0;
-                UpdateRole(role,targetSize,a,scaleStep,frame);
+                lastVisualUpdate=now;
+                Role current=CurrentRole();
+                if (current!=null && current.Name!="busy" && current.Name!="working")
+                {
+                    int limit=current.Name=="arrow"?18:current.Name=="hand"?12:8;
+                    int step=current.Name=="arrow"?2:4;
+                    int a=(int)Clamp(Math.Round(angle/step)*step,-limit,limit);
+                    UpdateRole(current,targetSize,a,scaleStep,0);
+                }
             }
             failures=0;
         }
@@ -239,7 +364,11 @@ namespace CodexInspiredPointer
 
         private void ApplyBase(int targetSize)
         {
-            foreach (Role role in roles) { role.LastKey=""; UpdateRole(role,targetSize,0,0,0); }
+            foreach (Role role in roles) {
+                role.LastKey="";
+                if (role.Name!="busy" && role.Name!="working")
+                    UpdateRole(role,targetSize,0,0,0);
+            }
             lastSize=targetSize;
             Log("base applied size="+targetSize);
         }

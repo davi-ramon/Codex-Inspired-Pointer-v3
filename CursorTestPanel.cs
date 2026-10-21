@@ -10,6 +10,8 @@ namespace CodexInspiredPointer
     public sealed class CursorTestPanel : Form
     {
         [DllImport("user32.dll")] private static extern IntPtr LoadCursor(IntPtr instance, IntPtr id);
+        [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+        private static extern IntPtr LoadCursorFromFile(string file);
         [DllImport("user32.dll", CharSet=CharSet.Unicode)]
         private static extern IntPtr LoadImage(IntPtr instance,string path,uint type,int width,int height,uint flags);
         private readonly Label status = new Label();
@@ -70,6 +72,13 @@ namespace CodexInspiredPointer
 
         private Cursor SystemCursor(uint id)
         {
+            if (id==32514 || id==32650)
+            {
+                string file=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "Codex Pointer","assets_active",id==32514?"busy.ani":"working.ani");
+                IntPtr animated=LoadCursorFromFile(file);
+                if (animated!=IntPtr.Zero) return new Cursor(animated);
+            }
             IntPtr handle=LoadCursor(IntPtr.Zero,(IntPtr)id);
             if (handle==IntPtr.Zero) return Cursors.Default;
             return new Cursor(handle);
@@ -167,7 +176,7 @@ namespace CodexInspiredPointer
             } catch (WaitHandleCannotBeOpenedException) { }
             catch (UnauthorizedAccessException) { }
             helper.Text=running?
-                "Auxiliar de movimento ativo — 17 funções com escala igual e efeito de retorno.":
+                "Auxiliar ativo — movimento na função visível; espera animada pelo Windows.":
                 "Auxiliar de movimento inativo — confira o instalador e motion.log.";
             helper.ForeColor=running?Color.FromArgb(113,220,168):Color.FromArgb(255,167,115);
         }

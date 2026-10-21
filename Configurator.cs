@@ -18,6 +18,9 @@ namespace CodexInspiredPointer
         private readonly ComboBox sizeBox = new ComboBox();
         private readonly ComboBox borderBox = new ComboBox();
         private readonly CheckBox motionBox = new CheckBox();
+        private readonly ComboBox glowColorBox = new ComboBox();
+        private readonly ComboBox glowRadiusBox = new ComboBox();
+        private readonly ComboBox glowIntensityBox = new ComboBox();
         private readonly PictureBox preview = new PictureBox();
         private readonly Label status = new Label();
         private readonly Button apply = new Button();
@@ -81,9 +84,39 @@ namespace CodexInspiredPointer
             motionBox.Location = new Point(590, 90);
             Controls.Add(motionBox);
 
+            AddLabel("Cor do brilho", 25, 130);
+            glowColorBox.DropDownStyle = ComboBoxStyle.DropDownList;
+            glowColorBox.Items.AddRange(new object[] { "Azul", "Ciano", "Roxo", "Branco" });
+            glowColorBox.SelectedIndex = 0;
+            glowColorBox.Location = new Point(135, 127);
+            glowColorBox.Width = 125;
+            Controls.Add(glowColorBox);
+
+            AddLabel("Raio", 282, 130);
+            glowRadiusBox.DropDownStyle = ComboBoxStyle.DropDownList;
+            glowRadiusBox.Items.AddRange(new object[] { "75%", "100%", "120%", "140%" });
+            glowRadiusBox.SelectedIndex = 2;
+            glowRadiusBox.Location = new Point(330, 127);
+            glowRadiusBox.Width = 105;
+            Controls.Add(glowRadiusBox);
+
+            AddLabel("Intensidade", 464, 130);
+            glowIntensityBox.DropDownStyle = ComboBoxStyle.DropDownList;
+            glowIntensityBox.Items.AddRange(new object[] { "60%", "100%", "130%", "180%" });
+            glowIntensityBox.SelectedIndex = 2;
+            glowIntensityBox.Location = new Point(565, 127);
+            glowIntensityBox.Width = 105;
+            Controls.Add(glowIntensityBox);
+            var glowNote = new Label();
+            glowNote.Text = "Brilho aplicado aos ponteiros";
+            glowNote.AutoSize = true;
+            glowNote.ForeColor = Color.FromArgb(177, 194, 229);
+            glowNote.Location = new Point(694, 130);
+            Controls.Add(glowNote);
+
             var previewPanel = new Panel();
-            previewPanel.Location = new Point(20, 130);
-            previewPanel.Size = new Size(930, 515);
+            previewPanel.Location = new Point(20, 170);
+            previewPanel.Size = new Size(930, 475);
             previewPanel.Anchor = AnchorStyles.Top | AnchorStyles.Bottom |
                                   AnchorStyles.Left | AnchorStyles.Right;
             previewPanel.BackColor = Color.FromArgb(21, 25, 35);
@@ -193,6 +226,24 @@ namespace CodexInspiredPointer
                     }
                 }
                 if (line == "Motion=0") motionBox.Checked = false;
+                if (line.StartsWith("GlowColor=", StringComparison.Ordinal))
+                {
+                    string[] colors = {"Blue","Cyan","Purple","White"};
+                    for (int i=0;i<colors.Length;i++)
+                        if (line.Substring(10)==colors[i]) glowColorBox.SelectedIndex=i;
+                }
+                if (line.StartsWith("GlowRadius=", StringComparison.Ordinal))
+                {
+                    int[] values={75,100,120,140}; int value;
+                    if (int.TryParse(line.Substring(11),out value))
+                        for (int i=0;i<values.Length;i++) if (values[i]==value) glowRadiusBox.SelectedIndex=i;
+                }
+                if (line.StartsWith("GlowIntensity=", StringComparison.Ordinal))
+                {
+                    int[] values={60,100,130,180}; int value;
+                    if (int.TryParse(line.Substring(14),out value))
+                        for (int i=0;i<values.Length;i++) if (values[i]==value) glowIntensityBox.SelectedIndex=i;
+                }
             }
         }
 
@@ -217,9 +268,15 @@ namespace CodexInspiredPointer
             status.Text = action == "install" ? "Aplicando ponteiros..." : "Restaurando ponteiros...";
             string preset = SelectedPreset();
             bool motion = motionBox.Checked;
+            string[] colors = {"Blue","Cyan","Purple","White"};
+            int[] radii = {75,100,120,140};
+            int[] intensities = {60,100,130,180};
+            string glowColor=colors[Math.Max(0,glowColorBox.SelectedIndex)];
+            int glowRadius=radii[Math.Max(0,glowRadiusBox.SelectedIndex)];
+            int glowIntensity=intensities[Math.Max(0,glowIntensityBox.SelectedIndex)];
             var worker = new BackgroundWorker();
             worker.DoWork += delegate(object sender, DoWorkEventArgs e) {
-                e.Result = RunScript(action, preset, motion);
+                e.Result = RunScript(action, preset, motion, glowColor, glowRadius, glowIntensity);
             };
             worker.RunWorkerCompleted += delegate(object sender, RunWorkerCompletedEventArgs e) {
                 apply.Enabled = true; restore.Enabled = true;
@@ -240,7 +297,8 @@ namespace CodexInspiredPointer
             worker.RunWorkerAsync();
         }
 
-        private ScriptResult RunScript(string action, string preset, bool motion)
+        private ScriptResult RunScript(string action, string preset, bool motion,
+                                       string glowColor, int glowRadius, int glowIntensity)
         {
             string script = Path.Combine(packageRoot, action == "install" ? "InstallPackage.ps1" : "UninstallPackage.ps1");
             string powershell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows),
@@ -248,7 +306,10 @@ namespace CodexInspiredPointer
             if (!File.Exists(script)) throw new FileNotFoundException("Script do pacote nao encontrado", script);
             var psi = new ProcessStartInfo(powershell);
             psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File \"" + script + "\"" +
-                            (action == "install" ? " -Preset " + preset + " -EnableMotion " + (motion ? "1" : "0") : "");
+                            (action == "install" ? " -Preset " + preset +
+                             " -EnableMotion " + (motion ? "1" : "0") +
+                             " -GlowColor " + glowColor + " -GlowRadius " + glowRadius +
+                             " -GlowIntensity " + glowIntensity : "");
             psi.UseShellExecute = false;
             psi.CreateNoWindow = true;
             psi.WindowStyle = ProcessWindowStyle.Hidden;

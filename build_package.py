@@ -211,16 +211,39 @@ def glyph(role):
 
 
 def cursor(art,hotspot):
-    sizes=(128,256); parts=[]
-    for img in (art.base,art.hidpi):
+    # Windows normally chooses a 32 px cursor even when a CUR only contains
+    # 128/256 px frames. Downsampling the whole canvas makes the actual glyph
+    # nearly invisible. Small entries crop the transparent margin instead:
+    # the glyph keeps its intended screen size, while larger entries retain
+    # the full diffuse glow for high DPI displays and the motion helper.
+    sizes=(32,48,64,96,128,256); parts=[]
+    images=[]; hotspots=[]
+    full=art.hidpi
+    full_hot=tuple(round(v*256/N) for v in place(*hotspot))
+    for n in sizes:
+        if n>=128:
+            img=art.base if n==128 else full
+            hot=(round(full_hot[0]*n/256),round(full_hot[1]*n/256))
+        else:
+            crop=n*2
+            left=(256-crop)//2; top=(256-crop)//2
+            left=max(0,min(256-crop,full_hot[0]-4 if full_hot[0]<left+4 else
+                           full_hot[0]-crop+4 if full_hot[0]>left+crop-4 else left))
+            top=max(0,min(256-crop,full_hot[1]-4 if full_hot[1]<top+4 else
+                          full_hot[1]-crop+4 if full_hot[1]>top+crop-4 else top))
+            img=full.crop((left,top,left+crop,top+crop)).resize((n,n),Image.Resampling.LANCZOS)
+            img.putalpha(ImageChops.multiply(img.getchannel("A"),
+                                             make_edge_fade(n,max(3,n//8))))
+            hot=(round((full_hot[0]-left)/2),round((full_hot[1]-top)/2))
+        images.append(img); hotspots.append(hot)
+    for img in images:
         buf=io.BytesIO()
         img.save(buf,"PNG",optimize=True)
         parts.append(buf.getvalue())
     result=bytearray(struct.pack("<HHH",0,2,len(sizes))); offset=6+16*len(sizes)
-    for n,part in zip(sizes,parts):
-        px,py=place(*hotspot)
+    for n,part,(hot_x,hot_y) in zip(sizes,parts,hotspots):
         result+=struct.pack("<BBBBHHII",n if n<256 else 0,n if n<256 else 0,0,0,
-                            round(px*n/N),round(py*n/N),len(part),offset)
+                            hot_x,hot_y,len(part),offset)
         offset+=len(part)
     return bytes(result)+b"".join(parts)
 

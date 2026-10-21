@@ -1,7 +1,10 @@
 param(
     [ValidatePattern('^s(70|75|85|95|110|125|150)-b(130|150|170)$')]
     [string]$Preset = 's85-b150',
-    [ValidateSet(0,1)][int]$EnableMotion = 1
+    [ValidateSet(0,1)][int]$EnableMotion = 1,
+    [ValidateSet('Blue','Cyan','Purple','White')][string]$GlowColor = 'Blue',
+    [ValidateSet(75,100,120,140)][int]$GlowRadius = 120,
+    [ValidateSet(60,100,130,180)][int]$GlowIntensity = 130
 )
 $ErrorActionPreference = 'Stop'
 $source = $PSScriptRoot
@@ -26,7 +29,20 @@ New-Item -ItemType Directory -Force -Path $installDir, $assetsDir, (Join-Path $a
 $stopFlag = Join-Path $installDir 'stop.flag'
 if (Test-Path -LiteralPath $backupFile) {
     Set-Content -LiteralPath $stopFlag -Value 'stop' -Encoding ASCII
-    Start-Sleep -Milliseconds 600
+    # Wait for the old helper and supervisor to release their mutexes before
+    # copying assets. Otherwise the previous instance can continue replacing
+    # cursors while the new scheme is being applied.
+    $match = [regex]::Escape($installDir)
+    for ($attempt = 0; $attempt -lt 32; $attempt++) {
+        $running = @(Get-CimInstance Win32_Process -Filter "name='powershell.exe'" |
+            Where-Object { $_.CommandLine -match $match -and
+                $_.CommandLine -match 'CursorMotion(V3|Launcher)\.ps1' })
+        if ($running.Count -eq 0) { break }
+        Start-Sleep -Milliseconds 250
+    }
+    if ($running.Count -gt 0) {
+        throw 'The previous pointer helper is still stopping. Please run Apply to Windows again.'
+    }
 }
 
 $cursorKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Control Panel\Cursors')
@@ -53,6 +69,14 @@ if (-not (Test-Path -LiteralPath (Join-Path $assetsSource 'render'))) {
     throw "The $Preset render sources are missing. Keep the complete package together."
 }
 Copy-Item -LiteralPath (Join-Path $assetsSource 'render') -Destination $assetsDir -Recurse -Force
+if ($GlowColor -ne 'Blue' -or $GlowRadius -ne 100 -or $GlowIntensity -ne 100) {
+    $themeExe = Join-Path $source 'CursorTheme.exe'
+    if (-not (Test-Path -LiteralPath $themeExe)) {
+        throw 'CursorTheme.exe is missing from the package.'
+    }
+    & $themeExe $assetsDir $GlowColor $GlowRadius $GlowIntensity
+    if ($LASTEXITCODE -ne 0) { throw 'Could not render the chosen glow settings.' }
+}
 Copy-Item -LiteralPath (Join-Path $source 'CursorMotionV3.cs') -Destination $installDir -Force
 Copy-Item -LiteralPath (Join-Path $source 'CursorMotionV3.ps1') -Destination $installDir -Force
 Copy-Item -LiteralPath (Join-Path $source 'CursorMotionLauncher.ps1') -Destination $installDir -Force
@@ -119,7 +143,9 @@ Add-Type -TypeDefinition $native
 if (-not [CursorRefreshV2]::SystemParametersInfo(0x57, 0, [IntPtr]::Zero, 0)) {
     throw 'Windows could not refresh the cursor scheme. Sign out and back in.'
 }
-Set-Content -LiteralPath (Join-Path $installDir 'settings.ini') -Value @("Preset=$Preset", "Motion=$EnableMotion") -Encoding ASCII
+Set-Content -LiteralPath (Join-Path $installDir 'settings.ini') -Value @(
+    "Preset=$Preset", "Motion=$EnableMotion", "GlowColor=$GlowColor",
+    "GlowRadius=$GlowRadius", "GlowIntensity=$GlowIntensity") -Encoding ASCII
 if ($EnableMotion -eq 1) {
     Start-Process -FilePath $powershellExe -ArgumentList ('-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $runner + '"') -WindowStyle Hidden
 }
